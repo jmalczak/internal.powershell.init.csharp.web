@@ -1,35 +1,38 @@
 param([String]$project_name, [Boolean]$is_service);
 
-$filesToInclude = ("*.config", "*.cs", "*.js", "*.ts", "*.xml", "*.asax", "*.csproj", "*.sln");
+function GetFilteredObjects($path, $type) {
+    $arguments = @{ Path = $path; Recurse = $true; }
+
+    if($type -eq "file") {
+        $arguments.Add("File", $true);
+        $arguments.Add("Include", ("*.config", "*.cs", "*.js", "*.ts", "*.xml", "*.asax", "*.csproj", "*.sln"));
+    } 
+    if ($type -eq "dir") {
+        $arguments.Add("Directory", $true); 
+    }
+
+    return Get-ChildItem @arguments | Where-Object { $_.FullName -notlike ".*" -and $_.FullName -notlike "*packages*" };
+}
 
 function FindAndReplace($path, $find, $replace) {
-    $files = Get-ChildItem $path -rec -Include $filesToInclude -File | 
-             Where-Object { $_.FullName -notlike ".*" -and $_.FullName -notlike "*packages*" };
-
-    foreach($file in $files) {
-        (Get-Content $file.PSPath) | 
-        Foreach-Object { $_ -replace $find, $replace } | 
-        Set-Content $file.PSPath;
+    foreach($file in (GetFilteredObjects $path "file")) {
+        (Get-Content $file.FullName) | Foreach-Object { $_ -replace $find, $replace } | 
+         Set-Content $file.FullName;
     }
 }
 
 function RenameFiles($path, $oldName, $newName) {
-    $files = Get-ChildItem $path -rec -Include $filesToInclude -File | 
-             Where-Object { $_.FullName -notlike ".*" -and $_.FullName -notlike "*packages*" };
-
-    $dirs =  Get-ChildItem $path -rec -Directory | 
-             Where-Object { $_.FullName -notlike ".*" -and $_.FullName -notlike "*packages*" }
-             Sort -length -desc;
+    $dirs =  (GetFilteredObjects $path "dir") | Sort-Object { $_.FullName.Length } -Descending
 
     foreach($dir in $dirs) {
-        if($dir.PSPath -like "*$oldName*") {
-            mv $dir.PSPath $dir.PSPath.Replace($oldName, $newName);
+        if($dir.Name -like "*$oldName*") {
+            mv $dir.FullName ([System.IO.Path]::Combine($dir.Parent.FullName, $dir.Name.Replace($oldName, $newName)));
         }
     }
 
-    foreach($file in $files) {
-        if($file.PSPath -like "*$oldName*") {
-            mv $file.PSPath $file.PSPath.Replace($oldName, $newName);
+    foreach($file in (GetFilteredObjects $path "file")) {
+        if($file.FullName -like "*$oldName*") {
+            mv $file.FullName ([System.IO.Path]::Combine($file.Directory.FullName, $file.Name.Replace($oldName, $newName)));
         }
     }
 }
@@ -38,12 +41,9 @@ if ($project_name -eq $null -or $project_name -eq "") {
     echo "Use init -project_name YourProjectName";
 } else {
     echo "Bootstraping project: $project_name";
-    echo "Renaming folders";
-    echo "Done";
-    echo "Replacing values";
-
-    #FindAndReplace -path "." -find "PROJECT_NAME" -replace $project_name;
+    echo "Renaming files and folders";
     RenameFiles -path "." -oldName "PROJECT_NAME" -newName $project_name;
-    
+    echo "Replacing values";
+    FindAndReplace -path "." -find "PROJECT_NAME" -replace $project_name;
     echo "Done";
 }
